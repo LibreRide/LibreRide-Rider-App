@@ -35,6 +35,11 @@ function App() {
         loadCurrentRide()
         loadRideHistory()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
+        if (currentRide?.driver_id) {
+          loadDriver(currentRide.driver_id)
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
         if (currentRide?.id) checkExistingRating(currentRide.id)
       })
@@ -43,13 +48,16 @@ function App() {
     const interval = setInterval(() => {
       loadCurrentRide()
       loadRideHistory()
+      if (currentRide?.driver_id) {
+        loadDriver(currentRide.driver_id)
+      }
     }, 5000)
 
     return () => {
       clearInterval(interval)
       supabase.removeChannel(channel)
     }
-  }, [loggedIn, currentRide?.id, hiddenCompletedRideId])
+  }, [loggedIn, currentRide?.id, currentRide?.driver_id, hiddenCompletedRideId])
 
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
@@ -362,6 +370,11 @@ function App() {
     return new Date(value).toLocaleString()
   }
 
+  function formatCoordinate(value) {
+    if (value === null || value === undefined) return 'Not available'
+    return Number(value).toFixed(6)
+  }
+
   if (!loggedIn) {
     return (
       <div className="driver-app">
@@ -449,6 +462,11 @@ function App() {
               <p><strong>Email:</strong> {driver.email || 'Driver'}</p>
               <p><strong>Status:</strong> {driver.availability_status || 'online'}</p>
               <p><strong>Trips:</strong> {driver.total_trips || 0}</p>
+
+              <h3>Driver Location</h3>
+              <p><strong>Latitude:</strong> {formatCoordinate(driver.current_lat)}</p>
+              <p><strong>Longitude:</strong> {formatCoordinate(driver.current_lng)}</p>
+              <p><strong>Last Updated:</strong> {driver.last_location_update ? formatDate(driver.last_location_update) : 'Not available'}</p>
             </div>
           )}
 
