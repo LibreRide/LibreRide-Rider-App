@@ -15,7 +15,9 @@ function App() {
   const [rating, setRating] = useState(5)
   const [comment, setComment] = useState('')
   const [ratingSubmitted, setRatingSubmitted] = useState(false)
+  const [hasRated, setHasRated] = useState(false)
   const [rideHistory, setRideHistory] = useState([])
+  const [hiddenCompletedRideId, setHiddenCompletedRideId] = useState(null)
 
   useEffect(() => {
     restoreSession()
@@ -29,24 +31,19 @@ function App() {
 
     const channel = supabase
       .channel('rider-trip-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'rides',
-        },
-        () => {
-          loadCurrentRide()
-          loadRideHistory()
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => {
+        loadCurrentRide()
+        loadRideHistory()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
+        if (currentRide?.id) checkExistingRating(currentRide.id)
+      })
       .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [loggedIn])
+  }, [loggedIn, currentRide?.id, hiddenCompletedRideId])
 
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
@@ -95,13 +92,17 @@ function App() {
     setRating(5)
     setComment('')
     setRatingSubmitted(false)
+    setHasRated(false)
     setRideHistory([])
+    setHiddenCompletedRideId(null)
   }
 
   async function requestRide() {
     setLoading(true)
     setMessage('')
     setRatingSubmitted(false)
+    setHasRated(false)
+    setHiddenCompletedRideId(null)
 
     if (!pickup || !destination) {
       setLoading(false)
@@ -157,7 +158,7 @@ function App() {
       .from('rides')
       .select('*')
       .eq('rider_id', user.id)
-      .not('status', 'eq', 'cancelled')
+      .in('status', ['requested', 'accepted', 'arrived', 'in_progress', 'completed'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -167,12 +168,40 @@ function App() {
       return
     }
 
+    if (data?.status === 'completed' && data.id === hiddenCompletedRideId) {
+      setCurrentRide(null)
+      setDriver(null)
+      return
+    }
+
     setCurrentRide(data || null)
 
     if (data?.driver_id) {
       await loadDriver(data.driver_id)
     } else {
       setDriver(null)
+    }
+
+    if (data?.id && data.status === 'completed') {
+      await checkExistingRating(data.id)
+    } else {
+      setHasRated(false)
+      setRatingSubmitted(false)
+    }
+  }
+
+  async function checkExistingRating(rideId) {
+    const { data } = await supabase
+      .from('ratings')
+      .select('id')
+      .eq('ride_id', rideId)
+      .maybeSingle()
+
+    if (data) {
+      setHasRated(true)
+      setRatingSubmitted(true)
+    } else {
+      setHasRated(false)
     }
   }
 
@@ -199,16 +228,11 @@ function App() {
   }
 
   async function loadDriver(driverId) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('drivers')
       .select('*')
       .eq('id', driverId)
       .maybeSingle()
-
-    if (error) {
-      setDriver(null)
-      return
-    }
 
     setDriver(data || null)
   }
@@ -248,6 +272,20 @@ function App() {
     setLoading(true)
     setMessage('')
 
+    const { data: existingRating } = await supabase
+      .from('ratings')
+      .select('id')
+      .eq('ride_id', currentRide.id)
+      .maybeSingle()
+
+    if (existingRating) {
+      setLoading(false)
+      setHasRated(true)
+      setRatingSubmitted(true)
+      setMessage('You already rated this trip.')
+      return
+    }
+
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -271,15 +309,27 @@ function App() {
     setLoading(false)
 
     if (error) {
+      if (error.message.includes('duplicate key value')) {
+        setHasRated(true)
+        setRatingSubmitted(true)
+        setMessage('You already rated this trip.')
+        return
+      }
+
       setMessage(error.message)
       return
     }
 
+    setHasRated(true)
     setRatingSubmitted(true)
     setMessage('Thank you for rating your driver.')
   }
 
   function requestAnotherRide() {
+    if (currentRide?.id) {
+      setHiddenCompletedRideId(currentRide.id)
+    }
+
     setCurrentRide(null)
     setDriver(null)
     setPickup('')
@@ -288,6 +338,7 @@ function App() {
     setRating(5)
     setComment('')
     setRatingSubmitted(false)
+    setHasRated(false)
     loadRideHistory()
   }
 
@@ -297,8 +348,6 @@ function App() {
     if (status === 'arrived') return 'Your driver has arrived.'
     if (status === 'in_progress') return 'Trip is in progress.'
     if (status === 'completed') return 'Trip completed.'
-    if (status === 'declined') return 'Driver declined. Waiting for another driver.'
-    if (status === 'cancelled') return 'Ride cancelled.'
     return status
   }
 
@@ -383,21 +432,10 @@ function App() {
           <p><strong>Dropoff:</strong> {currentRide.destination_address || 'Unknown'}</p>
           <p><strong>Fare:</strong> ${((currentRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
 
-          {currentRide.matched_at && (
-            <p><strong>Matched:</strong> {formatDate(currentRide.matched_at)}</p>
-          )}
-
-          {currentRide.driver_arrived_at && (
-            <p><strong>Driver Arrived:</strong> {formatDate(currentRide.driver_arrived_at)}</p>
-          )}
-
-          {currentRide.trip_started_at && (
-            <p><strong>Trip Started:</strong> {formatDate(currentRide.trip_started_at)}</p>
-          )}
-
-          {currentRide.completed_at && (
-            <p><strong>Completed:</strong> {formatDate(currentRide.completed_at)}</p>
-          )}
+          {currentRide.matched_at && <p><strong>Matched:</strong> {formatDate(currentRide.matched_at)}</p>}
+          {currentRide.driver_arrived_at && <p><strong>Driver Arrived:</strong> {formatDate(currentRide.driver_arrived_at)}</p>}
+          {currentRide.trip_started_at && <p><strong>Trip Started:</strong> {formatDate(currentRide.trip_started_at)}</p>}
+          {currentRide.completed_at && <p><strong>Completed:</strong> {formatDate(currentRide.completed_at)}</p>}
 
           {driver && (
             <div className="ride-card">
@@ -414,14 +452,11 @@ function App() {
             </button>
           )}
 
-          {currentRide.status === 'completed' && !ratingSubmitted && driver && (
+          {currentRide.status === 'completed' && driver && !hasRated && !ratingSubmitted && (
             <div className="ride-card">
               <h3>Rate Your Driver</h3>
 
-              <select
-                value={rating}
-                onChange={(e) => setRating(e.target.value)}
-              >
+              <select value={rating} onChange={(e) => setRating(e.target.value)}>
                 <option value="5">5 - Excellent</option>
                 <option value="4">4 - Good</option>
                 <option value="3">3 - Okay</option>
@@ -441,10 +476,11 @@ function App() {
             </div>
           )}
 
-          {currentRide.status === 'completed' && ratingSubmitted && (
+          {currentRide.status === 'completed' && (hasRated || ratingSubmitted) && (
             <div className="ride-card">
               <h3>Ride Complete</h3>
               <p>Thank you for riding with LibreRide.</p>
+              <p>You already rated this trip.</p>
               <button onClick={requestAnotherRide}>Request Another Ride</button>
             </div>
           )}
