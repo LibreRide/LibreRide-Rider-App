@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import { supabase } from './supabase'
 
+const API_BASE = 'https://libreride-backend.libreride.workers.dev'
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [email, setEmail] = useState('')
@@ -107,6 +109,39 @@ function App() {
     setHiddenCompletedRideId(null)
   }
 
+  async function payForRide() {
+    if (!currentRide) return
+
+    setLoading(true)
+    setMessage('')
+
+    const amountCents =
+      currentRide.final_fare_cents ||
+      currentRide.estimated_fare_cents ||
+      2450
+
+    const response = await fetch(`${API_BASE}/api/payments/create-checkout`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        rideId: currentRide.id,
+        amountCents,
+      }),
+    })
+
+    const data = await response.json()
+    setLoading(false)
+
+    if (!response.ok) {
+      setMessage(data.error || 'Payment failed to start.')
+      return
+    }
+
+    window.location.href = data.url
+  }
+
   async function requestRide() {
     setLoading(true)
     setMessage('')
@@ -142,6 +177,7 @@ function App() {
         pickup_lat: 25.7959,
         pickup_lng: -80.2906,
         estimated_fare_cents: 2450,
+        payment_status: 'unpaid',
       })
       .select('*')
       .single()
@@ -496,6 +532,13 @@ function App() {
           <p><strong>Pickup:</strong> {currentRide.pickup_address || 'Unknown'}</p>
           <p><strong>Dropoff:</strong> {currentRide.destination_address || 'Unknown'}</p>
           <p><strong>Fare:</strong> ${((currentRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+          <p><strong>Payment:</strong> {currentRide.payment_status || 'unpaid'}</p>
+
+          {currentRide.status === 'completed' && currentRide.payment_status !== 'paid' && (
+            <button onClick={payForRide} disabled={loading}>
+              {loading ? 'Opening Payment...' : 'Pay Now'}
+            </button>
+          )}
 
           {currentRide.matched_at && <p><strong>Matched:</strong> {formatDate(currentRide.matched_at)}</p>}
           {currentRide.driver_arrived_at && <p><strong>Driver Arrived:</strong> {formatDate(currentRide.driver_arrived_at)}</p>}
@@ -573,6 +616,7 @@ function App() {
               <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
               <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
               <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+              <p><strong>Payment:</strong> {ride.payment_status || 'unpaid'}</p>
               <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
             </div>
           ))
