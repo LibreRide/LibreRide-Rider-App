@@ -36,9 +36,7 @@ function App() {
         loadRideHistory()
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
-        if (currentRide?.driver_id) {
-          loadDriver(currentRide.driver_id)
-        }
+        if (currentRide?.driver_id) loadDriver(currentRide.driver_id)
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
         if (currentRide?.id) checkExistingRating(currentRide.id)
@@ -48,9 +46,7 @@ function App() {
     const interval = setInterval(() => {
       loadCurrentRide()
       loadRideHistory()
-      if (currentRide?.driver_id) {
-        loadDriver(currentRide.driver_id)
-      }
+      if (currentRide?.driver_id) loadDriver(currentRide.driver_id)
     }, 5000)
 
     return () => {
@@ -143,6 +139,8 @@ function App() {
         destination_address: destination,
         pickup_location: 'POINT(-80.2906 25.7959)',
         destination_location: 'POINT(-80.1918 25.7617)',
+        pickup_lat: 25.7959,
+        pickup_lng: -80.2906,
         estimated_fare_cents: 2450,
       })
       .select('*')
@@ -375,6 +373,51 @@ function App() {
     return Number(value).toFixed(6)
   }
 
+  function getPickupLat() {
+    return Number(currentRide?.pickup_lat || 25.7959)
+  }
+
+  function getPickupLng() {
+    return Number(currentRide?.pickup_lng || -80.2906)
+  }
+
+  function distanceMiles(lat1, lng1, lat2, lng2) {
+    if (!lat1 || !lng1 || !lat2 || !lng2) return null
+
+    const radiusMiles = 3958.8
+    const dLat = ((lat2 - lat1) * Math.PI) / 180
+    const dLng = ((lng2 - lng1) * Math.PI) / 180
+
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2)
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return radiusMiles * c
+  }
+
+  function driverDistance() {
+    if (!driver?.current_lat || !driver?.current_lng || !currentRide) return null
+
+    return distanceMiles(
+      Number(driver.current_lat),
+      Number(driver.current_lng),
+      getPickupLat(),
+      getPickupLng()
+    )
+  }
+
+  function etaMinutes() {
+    const miles = driverDistance()
+    if (!miles) return null
+
+    const averageCitySpeedMph = 25
+    return Math.max(1, Math.round((miles / averageCitySpeedMph) * 60))
+  }
+
   if (!loggedIn) {
     return (
       <div className="driver-app">
@@ -407,6 +450,9 @@ function App() {
       </div>
     )
   }
+
+  const milesAway = driverDistance()
+  const eta = etaMinutes()
 
   return (
     <div className="driver-app">
@@ -467,6 +513,10 @@ function App() {
               <p><strong>Latitude:</strong> {formatCoordinate(driver.current_lat)}</p>
               <p><strong>Longitude:</strong> {formatCoordinate(driver.current_lng)}</p>
               <p><strong>Last Updated:</strong> {driver.last_location_update ? formatDate(driver.last_location_update) : 'Not available'}</p>
+
+              <h3>ETA</h3>
+              <p><strong>Distance to pickup:</strong> {milesAway ? `${milesAway.toFixed(2)} miles` : 'Calculating...'}</p>
+              <p><strong>Estimated arrival:</strong> {eta ? `${eta} minutes` : 'Calculating...'}</p>
             </div>
           )}
 
