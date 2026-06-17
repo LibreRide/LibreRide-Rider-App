@@ -30,7 +30,7 @@ function App() {
     loadRideHistory()
 
     const channel = supabase
-      .channel('rider-trip-updates')
+      .channel('rider-trip-updates-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => {
         loadCurrentRide()
         loadRideHistory()
@@ -40,7 +40,13 @@ function App() {
       })
       .subscribe()
 
+    const interval = setInterval(() => {
+      loadCurrentRide()
+      loadRideHistory()
+    }, 5000)
+
     return () => {
+      clearInterval(interval)
       supabase.removeChannel(channel)
     }
   }, [loggedIn, currentRide?.id, hiddenCompletedRideId])
