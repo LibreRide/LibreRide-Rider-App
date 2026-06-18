@@ -522,11 +522,12 @@ function App() {
           <p><strong>Fare:</strong> ${((currentRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
           <p><strong>Payment:</strong> {currentRide.payment_status || 'unpaid'}</p>
 
-          {currentRide.status === 'completed' && currentRide.payment_status !== 'paid' && (
-            <button onClick={payForRide} disabled={loading}>
-              {loading ? 'Opening Payment...' : 'Pay Now'}
-            </button>
-          )}
+          {currentRide.payment_status !== 'paid' &&
+            (currentRide.status === 'payment_pending' || currentRide.status === 'completed') && (
+              <button onClick={payForRide} disabled={loading}>
+                {loading ? 'Opening Payment...' : 'Continue Payment'}
+              </button>
+            )}
 
           {currentRide.matched_at && <p><strong>Matched:</strong> {formatDate(currentRide.matched_at)}</p>}
           {currentRide.driver_arrived_at && <p><strong>Driver Arrived:</strong> {formatDate(currentRide.driver_arrived_at)}</p>}
