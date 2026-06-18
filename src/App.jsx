@@ -142,28 +142,53 @@ function App() {
     window.location.href = data.url
   }
 
-  async function requestRide() {
-    setLoading(true)
-    setMessage('')
-    setRatingSubmitted(false)
-    setHasRated(false)
-    setHiddenCompletedRideId(null)
+async function requestRide() {
+  setLoading(true)
+  setMessage('')
+  setRatingSubmitted(false)
+  setHasRated(false)
+  setHiddenCompletedRideId(null)
 
-    if (!pickup || !destination) {
-      setLoading(false)
-      setMessage('Enter pickup and destination.')
-      return
-    }
+  if (!pickup || !destination) {
+    setLoading(false)
+    setMessage('Enter pickup and destination.')
+    return
+  }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
-    if (!user) {
-      setLoading(false)
-      setMessage('You must be logged in.')
-      return
-    }
+  if (!user) {
+    setLoading(false)
+    setMessage('You must be logged in.')
+    return
+  }
+
+  const response = await fetch(`${API_BASE}/api/payments/prepaid-ride-checkout`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      riderId: user.id,
+      riderEmail: user.email,
+      pickupAddress: pickup,
+      destinationAddress: destination,
+      amountCents: 2450,
+    }),
+  })
+
+  const data = await response.json()
+  setLoading(false)
+
+  if (!response.ok) {
+    setMessage(data.error || 'Could not start payment.')
+    return
+  }
+
+  window.location.href = data.url
+}
 
     const { data, error } = await supabase
       .from('rides')
@@ -391,6 +416,7 @@ function App() {
   }
 
   function rideMessage(status) {
+if (status === 'payment_pending') return 'Payment pending. Complete payment to request this ride.'
     if (status === 'requested') return 'Looking for a driver...'
     if (status === 'accepted') return 'Driver accepted your ride.'
     if (status === 'arrived') return 'Your driver has arrived.'
