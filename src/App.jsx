@@ -20,6 +20,7 @@ function App() {
   const [hasRated, setHasRated] = useState(false)
   const [rideHistory, setRideHistory] = useState([])
   const [hiddenCompletedRideId, setHiddenCompletedRideId] = useState(null)
+  const [activePage, setActivePage] = useState('ride')
 
   useEffect(() => {
     restoreSession()
@@ -107,6 +108,7 @@ function App() {
     setHasRated(false)
     setRideHistory([])
     setHiddenCompletedRideId(null)
+    setActivePage('ride')
   }
 
   async function payForRide() {
@@ -374,6 +376,7 @@ function App() {
     setComment('')
     setRatingSubmitted(false)
     setHasRated(false)
+    setActivePage('ride')
     loadRideHistory()
   }
 
@@ -486,7 +489,17 @@ function App() {
         <button onClick={logout}>Logout</button>
       </header>
 
-      {!currentRide && (
+      <section className="card">
+        <button onClick={() => setActivePage('ride')}>
+          Request Ride
+        </button>
+
+        <button onClick={() => setActivePage('history')}>
+          Ride History
+        </button>
+      </section>
+
+      {activePage === 'ride' && !currentRide && (
         <section className="card">
           <h2>Request Ride</h2>
 
@@ -510,7 +523,7 @@ function App() {
         </section>
       )}
 
-      {currentRide && (
+      {activePage === 'ride' && currentRide && (
         <section className="card">
           <h2>Your Ride</h2>
 
@@ -593,24 +606,26 @@ function App() {
         </section>
       )}
 
-      <section className="card">
-        <h2>Recent Rides</h2>
+      {activePage === 'history' && (
+        <section className="card">
+          <h2>Ride History</h2>
 
-        {rideHistory.length === 0 ? (
-          <p>No ride history yet.</p>
-        ) : (
-          rideHistory.map((ride) => (
-            <div key={ride.id} className="ride-card">
-              <p><strong>Status:</strong> {ride.status}</p>
-              <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
-              <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
-              <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
-              <p><strong>Payment:</strong> {ride.payment_status || 'unpaid'}</p>
-              <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
-            </div>
-          ))
-        )}
-      </section>
+          {rideHistory.length === 0 ? (
+            <p>No ride history yet.</p>
+          ) : (
+            rideHistory.map((ride) => (
+              <div key={ride.id} className="ride-card">
+                <p><strong>Status:</strong> {ride.status}</p>
+                <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
+                <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
+                <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+                <p><strong>Payment:</strong> {ride.payment_status || 'unpaid'}</p>
+                <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
+              </div>
+            ))
+          )}
+        </section>
+      )}
 
       {message && <p>{message}</p>}
     </div>
