@@ -122,9 +122,7 @@ function App() {
 
     const response = await fetch(`${API_BASE}/api/payments/create-checkout`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         rideId: currentRide.id,
         amountCents,
@@ -165,34 +163,27 @@ function App() {
       return
     }
 
-    const { data, error } = await supabase
-      .from('rides')
-      .insert({
-        rider_id: user.id,
-        status: 'requested',
-        pickup_address: pickup,
-        destination_address: destination,
-        pickup_location: 'POINT(-80.2906 25.7959)',
-        destination_location: 'POINT(-80.1918 25.7617)',
-        pickup_lat: 25.7959,
-        pickup_lng: -80.2906,
-        estimated_fare_cents: 2450,
-        payment_status: 'unpaid',
-      })
-      .select('*')
-      .single()
+    const response = await fetch(`${API_BASE}/api/payments/prepaid-ride-checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        riderId: user.id,
+        riderEmail: user.email,
+        pickupAddress: pickup,
+        destinationAddress: destination,
+        amountCents: 2450,
+      }),
+    })
 
+    const data = await response.json()
     setLoading(false)
 
-    if (error) {
-      setMessage(error.message)
+    if (!response.ok) {
+      setMessage(data.error || 'Could not start payment.')
       return
     }
 
-    setCurrentRide(data)
-    setDriver(null)
-    setMessage('Ride requested. Looking for a driver.')
-    await loadRideHistory()
+    window.location.href = data.url
   }
 
   async function loadCurrentRide() {
@@ -206,7 +197,7 @@ function App() {
       .from('rides')
       .select('*')
       .eq('rider_id', user.id)
-      .in('status', ['requested', 'accepted', 'arrived', 'in_progress', 'completed'])
+      .in('status', ['payment_pending', 'requested', 'accepted', 'arrived', 'in_progress', 'completed'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -245,12 +236,8 @@ function App() {
       .eq('ride_id', rideId)
       .maybeSingle()
 
-    if (data) {
-      setHasRated(true)
-      setRatingSubmitted(true)
-    } else {
-      setHasRated(false)
-    }
+    setHasRated(Boolean(data))
+    setRatingSubmitted(Boolean(data))
   }
 
   async function loadRideHistory() {
@@ -391,6 +378,7 @@ function App() {
   }
 
   function rideMessage(status) {
+    if (status === 'payment_pending') return 'Payment pending. Complete payment to request this ride.'
     if (status === 'requested') return 'Looking for a driver...'
     if (status === 'accepted') return 'Driver accepted your ride.'
     if (status === 'arrived') return 'Your driver has arrived.'
@@ -517,7 +505,7 @@ function App() {
           <p><strong>Estimated Fare:</strong> $24.50</p>
 
           <button onClick={requestRide} disabled={loading}>
-            {loading ? 'Requesting...' : 'Request Ride'}
+            {loading ? 'Opening Payment...' : 'Request Ride'}
           </button>
         </section>
       )}
@@ -563,7 +551,7 @@ function App() {
             </div>
           )}
 
-          {currentRide.status === 'requested' && (
+          {(currentRide.status === 'requested' || currentRide.status === 'payment_pending') && (
             <button onClick={cancelRide} disabled={loading}>
               {loading ? 'Cancelling...' : 'Cancel Ride'}
             </button>
