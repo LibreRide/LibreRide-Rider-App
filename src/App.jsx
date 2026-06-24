@@ -10,8 +10,11 @@ function App() {
   const [password, setPassword] = useState('')
   const [pickup, setPickup] = useState('')
   const [destination, setDestination] = useState('')
+  const [pickupLat, setPickupLat] = useState(null)
+  const [pickupLng, setPickupLng] = useState(null)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [locationLoading, setLocationLoading] = useState(false)
   const [currentRide, setCurrentRide] = useState(null)
   const [driver, setDriver] = useState(null)
   const [rating, setRating] = useState(5)
@@ -99,6 +102,8 @@ function App() {
     setPassword('')
     setPickup('')
     setDestination('')
+    setPickupLat(null)
+    setPickupLng(null)
     setMessage('')
     setCurrentRide(null)
     setDriver(null)
@@ -155,6 +160,13 @@ function App() {
       return
     }
 
+    const pickupLocation = await getPickupLocationForRequest()
+
+    if (!pickupLocation) {
+      setLoading(false)
+      return
+    }
+
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -173,6 +185,8 @@ function App() {
         riderEmail: user.email,
         pickupAddress: pickup,
         destinationAddress: destination,
+        pickupLat: pickupLocation.lat,
+        pickupLng: pickupLocation.lng,
         amountCents: 2450,
       }),
     })
@@ -186,6 +200,70 @@ function App() {
     }
 
     window.location.href = data.url
+  }
+
+  function handlePickupChange(value) {
+    setPickup(value)
+    setPickupLat(null)
+    setPickupLng(null)
+  }
+
+  async function getPickupLocationForRequest() {
+    const savedPickupLat = Number(pickupLat)
+    const savedPickupLng = Number(pickupLng)
+
+    if (Number.isFinite(savedPickupLat) && Number.isFinite(savedPickupLng)) {
+      return {
+        lat: savedPickupLat,
+        lng: savedPickupLng,
+      }
+    }
+
+    return capturePickupLocation()
+  }
+
+  async function capturePickupLocation() {
+    if (!navigator.geolocation) {
+      setMessage('Location services are not supported by this browser.')
+      return null
+    }
+
+    setLocationLoading(true)
+    setMessage('Getting your pickup location...')
+
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 60000,
+        })
+      })
+
+      const lat = position.coords.latitude
+      const lng = position.coords.longitude
+
+      setPickupLat(lat)
+      setPickupLng(lng)
+      setMessage('Pickup GPS location captured.')
+
+      return { lat, lng }
+    } catch (error) {
+      let errorMessage = 'Could not get your pickup GPS location.'
+
+      if (error.code === 1) {
+        errorMessage = 'Location permission was denied. Please allow location access to request a ride.'
+      } else if (error.code === 2) {
+        errorMessage = 'Your location is currently unavailable. Please try again.'
+      } else if (error.code === 3) {
+        errorMessage = 'Location request timed out. Please try again.'
+      }
+
+      setMessage(errorMessage)
+      return null
+    } finally {
+      setLocationLoading(false)
+    }
   }
 
   async function loadCurrentRide() {
@@ -299,6 +377,8 @@ function App() {
     setDriver(null)
     setPickup('')
     setDestination('')
+    setPickupLat(null)
+    setPickupLng(null)
     setMessage('Ride cancelled.')
     await loadRideHistory()
   }
@@ -371,6 +451,8 @@ function App() {
     setDriver(null)
     setPickup('')
     setDestination('')
+    setPickupLat(null)
+    setPickupLng(null)
     setMessage('')
     setRating(5)
     setComment('')
@@ -506,8 +588,18 @@ function App() {
           <input
             placeholder="Pickup location"
             value={pickup}
-            onChange={(e) => setPickup(e.target.value)}
+            onChange={(e) => handlePickupChange(e.target.value)}
           />
+
+          <button type="button" onClick={capturePickupLocation} disabled={loading || locationLoading}>
+            {locationLoading ? 'Getting Location...' : 'Use My Current Location'}
+          </button>
+
+          {pickupLat !== null && pickupLng !== null && (
+            <p>
+              <strong>Pickup GPS:</strong> {Number(pickupLat).toFixed(6)}, {Number(pickupLng).toFixed(6)}
+            </p>
+          )}
 
           <input
             placeholder="Destination"
@@ -517,7 +609,7 @@ function App() {
 
           <p><strong>Estimated Fare:</strong> $24.50</p>
 
-          <button onClick={requestRide} disabled={loading}>
+          <button onClick={requestRide} disabled={loading || locationLoading}>
             {loading ? 'Opening Payment...' : 'Request Ride'}
           </button>
         </section>
