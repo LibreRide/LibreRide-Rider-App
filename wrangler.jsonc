@@ -2,13 +2,5 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "libreride-rider-app",
   "compatibility_date": "2026-06-24",
-  "observability": {
-    "enabled": true
-  },
-  "assets": {
-    "not_found_handling": "single-page-application"
-  },
-  "compatibility_flags": [
-    "nodejs_compat"
-  ]
+  "pages_build_output_dir": "dist"
 }
