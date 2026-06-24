@@ -7,6 +7,36 @@ const API_BASE = 'https://libreride-backend.libride.workers.dev'.replace(
   'libreride-backend.libreride.workers.dev'
 )
 
+const RIDE_TYPES = [
+  {
+    value: 'regular',
+    label: 'Regular',
+    capacity: 4,
+  },
+  {
+    value: 'xl',
+    label: 'XL',
+    capacity: 6,
+  },
+  {
+    value: 'premium',
+    label: 'Premium',
+    capacity: 4,
+  },
+  {
+    value: 'premium_xl',
+    label: 'Premium XL',
+    capacity: 6,
+  },
+]
+
+function formatRideType(value) {
+  if (value === 'premium_xl') return 'Premium XL'
+  if (value === 'premium') return 'Premium'
+  if (value === 'xl') return 'XL'
+  return 'Regular'
+}
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [email, setEmail] = useState('')
@@ -15,6 +45,7 @@ function App() {
   const [destination, setDestination] = useState('')
   const [pickupLat, setPickupLat] = useState(null)
   const [pickupLng, setPickupLng] = useState(null)
+  const [rideType, setRideType] = useState('regular')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [locationLoading, setLocationLoading] = useState(false)
@@ -109,6 +140,7 @@ function App() {
     setDestination('')
     setPickupLat(null)
     setPickupLng(null)
+    setRideType('regular')
     setMessage('')
     setLoading(false)
     setLocationLoading(false)
@@ -171,7 +203,7 @@ function App() {
 
     let estimate = rideEstimate
 
-    if (!estimate) {
+    if (!estimate || estimate.rideType !== rideType) {
       estimate = await estimateRide()
     }
 
@@ -208,6 +240,12 @@ function App() {
         destinationLat: estimate.destinationLat,
         destinationLng: estimate.destinationLng,
         amountCents: estimate.estimatedFareCents,
+        rideType: estimate.rideType || rideType,
+        rideTypeLabel: estimate.rideTypeLabel || formatRideType(rideType),
+        requestedCapacity: estimate.requestedCapacity || selectedRideType().capacity,
+        estimatedDistanceMiles: estimate.distanceMiles,
+        estimatedDurationMinutes: estimate.estimatedMinutes,
+        fareBreakdown: estimate.fareBreakdown,
       }),
     })
 
@@ -222,6 +260,10 @@ function App() {
     window.location.href = data.url
   }
 
+  function selectedRideType() {
+    return RIDE_TYPES.find((type) => type.value === rideType) || RIDE_TYPES[0]
+  }
+
   function handlePickupChange(value) {
     setPickup(value)
     setPickupLat(null)
@@ -231,6 +273,11 @@ function App() {
 
   function handleDestinationChange(value) {
     setDestination(value)
+    setRideEstimate(null)
+  }
+
+  function handleRideTypeChange(value) {
+    setRideType(value)
     setRideEstimate(null)
   }
 
@@ -259,6 +306,7 @@ function App() {
         destinationAddress: destination,
         pickupLat: pickupLocation.lat,
         pickupLng: pickupLocation.lng,
+        rideType,
       }),
     })
 
@@ -452,6 +500,7 @@ function App() {
     setDestination('')
     setPickupLat(null)
     setPickupLng(null)
+    setRideType('regular')
     setRideEstimate(null)
     setMessage('Ride cancelled.')
     await loadRideHistory()
@@ -527,6 +576,7 @@ function App() {
     setDestination('')
     setPickupLat(null)
     setPickupLng(null)
+    setRideType('regular')
     setRideEstimate(null)
     setMessage('')
     setRating(5)
@@ -682,15 +732,36 @@ function App() {
             onChange={(e) => handleDestinationChange(e.target.value)}
           />
 
+          <div className="ride-card">
+            <h3>Choose Ride Type</h3>
+
+            {RIDE_TYPES.map((type) => (
+              <button
+                key={type.value}
+                type="button"
+                onClick={() => handleRideTypeChange(type.value)}
+                disabled={loading || locationLoading || estimateLoading}
+                style={{
+                  fontWeight: rideType === type.value ? 'bold' : 'normal',
+                  borderWidth: rideType === type.value ? '2px' : '1px',
+                  margin: '4px',
+                }}
+              >
+                {type.label} • {type.capacity} seats
+              </button>
+            ))}
+          </div>
+
           {rideEstimate ? (
             <div className="ride-card">
-              <h3>Ride Estimate</h3>
+              <h3>{rideEstimate.rideTypeLabel || formatRideType(rideEstimate.rideType)} Estimate</h3>
+              <p><strong>Capacity:</strong> {rideEstimate.requestedCapacity || selectedRideType().capacity} seats</p>
               <p><strong>Distance:</strong> {rideEstimate.distanceMiles} miles</p>
               <p><strong>Estimated time:</strong> {rideEstimate.estimatedMinutes} minutes</p>
               <p><strong>Estimated fare:</strong> ${Number(rideEstimate.estimatedFareDollars || 0).toFixed(2)}</p>
             </div>
           ) : (
-            <p><strong>Estimated Fare:</strong> Tap Estimate Fare</p>
+            <p><strong>Estimated Fare:</strong> Choose ride type, then tap Estimate Fare</p>
           )}
 
           <button type="button" onClick={estimateRide} disabled={loading || locationLoading || estimateLoading}>
@@ -710,6 +781,10 @@ function App() {
           <p><strong>Status:</strong> {currentRide.status}</p>
           <p>{rideMessage(currentRide.status)}</p>
 
+          <p><strong>Ride Type:</strong> {formatRideType(currentRide.ride_type)}</p>
+          {currentRide.requested_capacity && (
+            <p><strong>Capacity:</strong> {currentRide.requested_capacity} seats</p>
+          )}
           <p><strong>Pickup:</strong> {currentRide.pickup_address || 'Unknown'}</p>
           <p><strong>Dropoff:</strong> {currentRide.destination_address || 'Unknown'}</p>
           <p><strong>Fare:</strong> ${((currentRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
@@ -802,6 +877,10 @@ function App() {
             rideHistory.map((ride) => (
               <div key={ride.id} className="ride-card">
                 <p><strong>Status:</strong> {ride.status}</p>
+                <p><strong>Ride Type:</strong> {formatRideType(ride.ride_type)}</p>
+                {ride.requested_capacity && (
+                  <p><strong>Capacity:</strong> {ride.requested_capacity} seats</p>
+                )}
                 <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
                 <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
                 <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
