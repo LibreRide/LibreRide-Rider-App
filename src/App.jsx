@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import { supabase } from './supabase'
 
-const API_BASE = 'https://libreride-backend.libreride.workers.dev'
+const API_BASE = 'https://libreride-backend.libride.workers.dev'.replace(
+  'libreride-backend.libride.workers.dev',
+  'libreride-backend.libreride.workers.dev'
+)
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
@@ -15,6 +18,8 @@ function App() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [locationLoading, setLocationLoading] = useState(false)
+  const [estimateLoading, setEstimateLoading] = useState(false)
+  const [rideEstimate, setRideEstimate] = useState(null)
   const [currentRide, setCurrentRide] = useState(null)
   const [driver, setDriver] = useState(null)
   const [rating, setRating] = useState(5)
@@ -105,6 +110,10 @@ function App() {
     setPickupLat(null)
     setPickupLng(null)
     setMessage('')
+    setLoading(false)
+    setLocationLoading(false)
+    setEstimateLoading(false)
+    setRideEstimate(null)
     setCurrentRide(null)
     setDriver(null)
     setRating(5)
@@ -160,11 +169,20 @@ function App() {
       return
     }
 
-    const pickupLocation = await getPickupLocationForRequest()
+    let estimate = rideEstimate
 
-    if (!pickupLocation) {
+    if (!estimate) {
+      estimate = await estimateRide()
+    }
+
+    if (!estimate) {
       setLoading(false)
       return
+    }
+
+    const pickupLocation = {
+      lat: estimate.pickupLat,
+      lng: estimate.pickupLng,
     }
 
     const {
@@ -184,10 +202,12 @@ function App() {
         riderId: user.id,
         riderEmail: user.email,
         pickupAddress: pickup,
-        destinationAddress: destination,
+        destinationAddress: estimate.destinationAddress || destination,
         pickupLat: pickupLocation.lat,
         pickupLng: pickupLocation.lng,
-        amountCents: 2450,
+        destinationLat: estimate.destinationLat,
+        destinationLng: estimate.destinationLng,
+        amountCents: estimate.estimatedFareCents,
       }),
     })
 
@@ -206,6 +226,58 @@ function App() {
     setPickup(value)
     setPickupLat(null)
     setPickupLng(null)
+    setRideEstimate(null)
+  }
+
+  function handleDestinationChange(value) {
+    setDestination(value)
+    setRideEstimate(null)
+  }
+
+  async function estimateRide() {
+    setMessage('')
+    setEstimateLoading(true)
+
+    if (!pickup || !destination) {
+      setEstimateLoading(false)
+      setMessage('Enter pickup and destination before estimating fare.')
+      return null
+    }
+
+    const pickupLocation = await getPickupLocationForRequest()
+
+    if (!pickupLocation) {
+      setEstimateLoading(false)
+      return null
+    }
+
+    const response = await fetch(`${API_BASE}/api/rides/estimate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pickupAddress: pickup,
+        destinationAddress: destination,
+        pickupLat: pickupLocation.lat,
+        pickupLng: pickupLocation.lng,
+      }),
+    })
+
+    const data = await response.json()
+    setEstimateLoading(false)
+
+    if (!response.ok) {
+      setRideEstimate(null)
+      setMessage(data.error || 'Could not estimate ride.')
+      return null
+    }
+
+    setRideEstimate(data)
+    setPickupLat(data.pickupLat)
+    setPickupLng(data.pickupLng)
+    setDestination(data.destinationAddress || destination)
+    setMessage('Fare estimate ready.')
+
+    return data
   }
 
   async function getPickupLocationForRequest() {
@@ -245,6 +317,7 @@ function App() {
 
       setPickupLat(lat)
       setPickupLng(lng)
+      setRideEstimate(null)
       setMessage('Pickup GPS location captured.')
 
       return { lat, lng }
@@ -379,6 +452,7 @@ function App() {
     setDestination('')
     setPickupLat(null)
     setPickupLng(null)
+    setRideEstimate(null)
     setMessage('Ride cancelled.')
     await loadRideHistory()
   }
@@ -453,6 +527,7 @@ function App() {
     setDestination('')
     setPickupLat(null)
     setPickupLng(null)
+    setRideEstimate(null)
     setMessage('')
     setRating(5)
     setComment('')
@@ -604,13 +679,26 @@ function App() {
           <input
             placeholder="Destination"
             value={destination}
-            onChange={(e) => setDestination(e.target.value)}
+            onChange={(e) => handleDestinationChange(e.target.value)}
           />
 
-          <p><strong>Estimated Fare:</strong> $24.50</p>
+          {rideEstimate ? (
+            <div className="ride-card">
+              <h3>Ride Estimate</h3>
+              <p><strong>Distance:</strong> {rideEstimate.distanceMiles} miles</p>
+              <p><strong>Estimated time:</strong> {rideEstimate.estimatedMinutes} minutes</p>
+              <p><strong>Estimated fare:</strong> ${Number(rideEstimate.estimatedFareDollars || 0).toFixed(2)}</p>
+            </div>
+          ) : (
+            <p><strong>Estimated Fare:</strong> Tap Estimate Fare</p>
+          )}
 
-          <button onClick={requestRide} disabled={loading || locationLoading}>
-            {loading ? 'Opening Payment...' : 'Request Ride'}
+          <button type="button" onClick={estimateRide} disabled={loading || locationLoading || estimateLoading}>
+            {estimateLoading ? 'Estimating...' : 'Estimate Fare'}
+          </button>
+
+          <button onClick={requestRide} disabled={loading || locationLoading || estimateLoading}>
+            {loading ? 'Opening Payment...' : 'Request Ride & Pay'}
           </button>
         </section>
       )}
@@ -625,6 +713,12 @@ function App() {
           <p><strong>Pickup:</strong> {currentRide.pickup_address || 'Unknown'}</p>
           <p><strong>Dropoff:</strong> {currentRide.destination_address || 'Unknown'}</p>
           <p><strong>Fare:</strong> ${((currentRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+          {currentRide.estimated_distance_miles && (
+            <p><strong>Distance:</strong> {Number(currentRide.estimated_distance_miles).toFixed(2)} miles</p>
+          )}
+          {currentRide.estimated_duration_minutes && (
+            <p><strong>Estimated time:</strong> {Math.round(Number(currentRide.estimated_duration_minutes))} minutes</p>
+          )}
           <p><strong>Payment:</strong> {currentRide.payment_status || 'unpaid'}</p>
 
           {currentRide.payment_status !== 'paid' &&
@@ -711,6 +805,12 @@ function App() {
                 <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
                 <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
                 <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+                {ride.estimated_distance_miles && (
+                  <p><strong>Distance:</strong> {Number(ride.estimated_distance_miles).toFixed(2)} miles</p>
+                )}
+                {ride.estimated_duration_minutes && (
+                  <p><strong>Estimated time:</strong> {Math.round(Number(ride.estimated_duration_minutes))} minutes</p>
+                )}
                 <p><strong>Payment:</strong> {ride.payment_status || 'unpaid'}</p>
                 <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
               </div>
