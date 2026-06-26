@@ -2,10 +2,7 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import { supabase } from './supabase'
 
-const API_BASE = 'https://libreride-backend.libride.workers.dev'.replace(
-  'libreride-backend.libride.workers.dev',
-  'libreride-backend.libreride.workers.dev'
-)
+const API_BASE = 'https://libreride-backend.libreride.workers.dev'
 
 const RIDE_TYPES = [
   {
@@ -39,8 +36,19 @@ function formatRideType(value) {
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
+  const [authMode, setAuthMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  const [riderProfile, setRiderProfile] = useState(null)
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [privacyAccepted, setPrivacyAccepted] = useState(false)
+  const [paymentTermsAccepted, setPaymentTermsAccepted] = useState(false)
+
   const [pickup, setPickup] = useState('')
   const [destination, setDestination] = useState('')
   const [pickupLat, setPickupLat] = useState(null)
@@ -97,12 +105,62 @@ function App() {
     }
   }, [loggedIn, currentRide?.id, currentRide?.driver_id, hiddenCompletedRideId])
 
+  function profileIsComplete(profile = riderProfile) {
+    return Boolean(
+      profile?.first_name &&
+      profile?.last_name &&
+      profile?.phone &&
+      profile?.terms_accepted &&
+      profile?.privacy_accepted &&
+      profile?.payment_terms_accepted
+    )
+  }
+
+  function loadProfileIntoForm(profile) {
+    setFirstName(profile?.first_name || '')
+    setLastName(profile?.last_name || '')
+    setPhone(profile?.phone || '')
+    setTermsAccepted(Boolean(profile?.terms_accepted))
+    setPrivacyAccepted(Boolean(profile?.privacy_accepted))
+    setPaymentTermsAccepted(Boolean(profile?.payment_terms_accepted))
+  }
+
+  async function loadRiderProfile(authUserId) {
+    const { data, error } = await supabase
+      .from('rider_profiles')
+      .select('*')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle()
+
+    if (error) {
+      setMessage(error.message)
+      return null
+    }
+
+    if (data) {
+      setRiderProfile(data)
+      loadProfileIntoForm(data)
+      return data
+    }
+
+    setRiderProfile(null)
+    return null
+  }
+
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
 
     if (data.session?.user) {
-      setEmail(data.session.user.email)
+      const user = data.session.user
+      setEmail(user.email || '')
       setLoggedIn(true)
+
+      const profile = await loadRiderProfile(user.id)
+
+      if (!profileIsComplete(profile)) {
+        setActivePage('profile')
+      }
+
       await loadCurrentRide()
       await loadRideHistory()
     }
@@ -125,17 +183,177 @@ function App() {
       return
     }
 
-    setEmail(data.user.email)
+    setEmail(data.user.email || email)
     setLoggedIn(true)
+
+    const profile = await loadRiderProfile(data.user.id)
+
+    if (!profileIsComplete(profile)) {
+      setActivePage('profile')
+      setMessage('Please complete your rider profile before requesting a ride.')
+    } else {
+      setActivePage('ride')
+      setMessage('')
+    }
+
     await loadCurrentRide()
     await loadRideHistory()
+  }
+
+  async function signup(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+
+    if (!firstName || !lastName || !phone || !email || !password) {
+      setLoading(false)
+      setMessage('Please complete all required fields.')
+      return
+    }
+
+    if (password.length < 6) {
+      setLoading(false)
+      setMessage('Password must be at least 6 characters.')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setLoading(false)
+      setMessage('Passwords do not match.')
+      return
+    }
+
+    if (!termsAccepted || !privacyAccepted || !paymentTermsAccepted) {
+      setLoading(false)
+      setMessage('You must accept the terms, privacy policy, and payment notice.')
+      return
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          first_name: firstName,
+          last_name: lastName,
+          phone,
+          role: 'rider',
+        },
+      },
+    })
+
+    if (error) {
+      setLoading(false)
+      setMessage(error.message)
+      return
+    }
+
+    if (data.session?.user) {
+      const savedProfile = await upsertRiderProfile(data.session.user)
+
+      setLoading(false)
+
+      if (savedProfile) {
+        setLoggedIn(true)
+        setRiderProfile(savedProfile)
+        setActivePage('ride')
+        setMessage('Rider account created successfully.')
+      }
+
+      return
+    }
+
+    setLoading(false)
+    setAuthMode('login')
+    setPassword('')
+    setConfirmPassword('')
+    setMessage('Account created. Check your email to verify your account, then log in.')
+  }
+
+  async function upsertRiderProfile(user) {
+    const now = new Date().toISOString()
+
+    const { data, error } = await supabase
+      .from('rider_profiles')
+      .upsert(
+        {
+          auth_user_id: user.id,
+          email: user.email || email,
+          first_name: firstName,
+          last_name: lastName,
+          phone,
+          terms_accepted: termsAccepted,
+          privacy_accepted: privacyAccepted,
+          payment_terms_accepted: paymentTermsAccepted,
+          terms_accepted_at: termsAccepted && privacyAccepted && paymentTermsAccepted ? now : null,
+          updated_at: now,
+        },
+        { onConflict: 'auth_user_id' }
+      )
+      .select('*')
+      .single()
+
+    if (error) {
+      setMessage(error.message)
+      return null
+    }
+
+    setRiderProfile(data)
+    loadProfileIntoForm(data)
+    return data
+  }
+
+  async function saveRiderProfile(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+
+    if (!firstName || !lastName || !phone) {
+      setLoading(false)
+      setMessage('First name, last name, and phone are required.')
+      return
+    }
+
+    if (!termsAccepted || !privacyAccepted || !paymentTermsAccepted) {
+      setLoading(false)
+      setMessage('You must accept the terms, privacy policy, and payment notice.')
+      return
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      setLoading(false)
+      setMessage('You must be logged in.')
+      return
+    }
+
+    const savedProfile = await upsertRiderProfile(user)
+
+    setLoading(false)
+
+    if (savedProfile) {
+      setActivePage('ride')
+      setMessage('Rider profile saved.')
+    }
   }
 
   async function logout() {
     await supabase.auth.signOut()
     setLoggedIn(false)
+    setAuthMode('login')
     setEmail('')
     setPassword('')
+    setConfirmPassword('')
+    setRiderProfile(null)
+    setFirstName('')
+    setLastName('')
+    setPhone('')
+    setTermsAccepted(false)
+    setPrivacyAccepted(false)
+    setPaymentTermsAccepted(false)
     setPickup('')
     setDestination('')
     setPickupLat(null)
@@ -194,6 +412,13 @@ function App() {
     setRatingSubmitted(false)
     setHasRated(false)
     setHiddenCompletedRideId(null)
+
+    if (!profileIsComplete()) {
+      setLoading(false)
+      setActivePage('profile')
+      setMessage('Complete your rider profile before requesting a ride.')
+      return
+    }
 
     if (!pickup || !destination) {
       setLoading(false)
@@ -284,6 +509,13 @@ function App() {
   async function estimateRide() {
     setMessage('')
     setEstimateLoading(true)
+
+    if (!profileIsComplete()) {
+      setEstimateLoading(false)
+      setActivePage('profile')
+      setMessage('Complete your rider profile before estimating a ride.')
+      return null
+    }
 
     if (!pickup || !destination) {
       setEstimateLoading(false)
@@ -652,32 +884,195 @@ function App() {
     return Math.max(1, Math.round((miles / averageCitySpeedMph) * 60))
   }
 
+  function renderProfileForm() {
+    return (
+      <section className="card">
+        <h2>Rider Profile</h2>
+        <p>Complete this profile before requesting a ride.</p>
+
+        <form onSubmit={saveRiderProfile}>
+          <input
+            placeholder="First name"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+          />
+
+          <input
+            placeholder="Last name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+          />
+
+          <input
+            placeholder="Phone number"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+
+          <label style={{ display: 'block', marginBottom: '8px' }}>
+            <input
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              style={{ width: 'auto', marginRight: '8px' }}
+            />
+            I accept the LibreRide Terms of Service.
+          </label>
+
+          <label style={{ display: 'block', marginBottom: '8px' }}>
+            <input
+              type="checkbox"
+              checked={privacyAccepted}
+              onChange={(e) => setPrivacyAccepted(e.target.checked)}
+              style={{ width: 'auto', marginRight: '8px' }}
+            />
+            I accept the LibreRide Privacy Policy.
+          </label>
+
+          <label style={{ display: 'block', marginBottom: '8px' }}>
+            <input
+              type="checkbox"
+              checked={paymentTermsAccepted}
+              onChange={(e) => setPaymentTermsAccepted(e.target.checked)}
+              style={{ width: 'auto', marginRight: '8px' }}
+            />
+            I understand rides are prepaid before dispatch.
+          </label>
+
+          <button type="submit" disabled={loading}>
+            {loading ? 'Saving...' : 'Save Rider Profile'}
+          </button>
+        </form>
+      </section>
+    )
+  }
+
   if (!loggedIn) {
     return (
       <div className="driver-app">
         <section className="card">
           <h1>LibreRide Rider</h1>
-          <p>Sign in to request a ride</p>
+          <p>{authMode === 'login' ? 'Sign in to request a ride' : 'Create your rider account'}</p>
 
-          <form onSubmit={login}>
-            <input
-              type="email"
-              placeholder="Rider email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-
-            <button type="submit" disabled={loading}>
-              {loading ? 'Signing In...' : 'Login'}
+          <div style={{ marginBottom: '12px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('login')
+                setMessage('')
+              }}
+            >
+              Login
             </button>
-          </form>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('signup')
+                setMessage('')
+              }}
+              style={{ marginLeft: '8px' }}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authMode === 'login' ? (
+            <form onSubmit={login}>
+              <input
+                type="email"
+                placeholder="Rider email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+
+              <button type="submit" disabled={loading}>
+                {loading ? 'Signing In...' : 'Login'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={signup}>
+              <input
+                placeholder="First name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+
+              <input
+                placeholder="Last name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+
+              <input
+                placeholder="Phone number"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+
+              <input
+                type="email"
+                placeholder="Rider email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+
+              <input
+                type="password"
+                placeholder="Confirm password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  style={{ width: 'auto', marginRight: '8px' }}
+                />
+                I accept the LibreRide Terms of Service.
+              </label>
+
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={privacyAccepted}
+                  onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                  style={{ width: 'auto', marginRight: '8px' }}
+                />
+                I accept the LibreRide Privacy Policy.
+              </label>
+
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={paymentTermsAccepted}
+                  onChange={(e) => setPaymentTermsAccepted(e.target.checked)}
+                  style={{ width: 'auto', marginRight: '8px' }}
+                />
+                I understand rides are prepaid before dispatch.
+              </label>
+
+              <button type="submit" disabled={loading}>
+                {loading ? 'Creating Account...' : 'Create Rider Account'}
+              </button>
+            </form>
+          )}
 
           {message && <p>{message}</p>}
         </section>
@@ -693,6 +1088,11 @@ function App() {
       <header className="card">
         <h1>LibreRide Rider</h1>
         <p>{email}</p>
+        {riderProfile && (
+          <p>
+            {riderProfile.first_name} {riderProfile.last_name} • {riderProfile.phone}
+          </p>
+        )}
         <button onClick={logout}>Logout</button>
       </header>
 
@@ -701,12 +1101,28 @@ function App() {
           Request Ride
         </button>
 
+        <button onClick={() => setActivePage('profile')}>
+          Rider Profile
+        </button>
+
         <button onClick={() => setActivePage('history')}>
           Ride History
         </button>
       </section>
 
-      {activePage === 'ride' && !currentRide && (
+      {activePage === 'profile' && renderProfileForm()}
+
+      {activePage === 'ride' && !profileIsComplete() && (
+        <section className="card">
+          <h2>Complete Rider Profile</h2>
+          <p>You must complete your rider profile before requesting a ride.</p>
+          <button type="button" onClick={() => setActivePage('profile')}>
+            Complete Profile
+          </button>
+        </section>
+      )}
+
+      {activePage === 'ride' && profileIsComplete() && !currentRide && (
         <section className="card">
           <h2>Request Ride</h2>
 
